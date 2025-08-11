@@ -448,7 +448,39 @@ class TTSTrainer(pl.LightningModule):
         diff = (pred - target).pow(2) * mask
         denom = mask.sum().clamp_min(1)
         return diff.sum() / denom
-    
+
+    def _masked_pearsonr(self, pred: torch.Tensor, target: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+        """Compute masked Pearson correlation along time for F0 sequences.
+        pred/target: [B, T] ; mask: [B, T]
+        Returns scalar tensor.
+        """
+        # flatten across batch and time with mask
+        pred = pred.contiguous().view(-1)
+        target = target.contiguous().view(-1)
+        m = mask.contiguous().view(-1).to(dtype=pred.dtype)
+        # guard
+        if m.sum() < 2:
+            return torch.zeros(1, device=pred.device, dtype=pred.dtype).squeeze(0)
+        # mean with mask
+        mean_pred = (pred * m).sum() / m.sum()
+        mean_tgt = (target * m).sum() / m.sum()
+        dp = ((pred - mean_pred) * (target - mean_tgt) * m).sum()
+        var_p = (((pred - mean_pred) ** 2) * m).sum()
+        var_t = (((target - mean_tgt) ** 2) * m).sum()
+        denom = (var_p.clamp_min(1e-8) * var_t.clamp_min(1e-8)).sqrt()
+        corr = dp / denom
+        return corr
+
+    def _masked_vuv_error(self, f0_pred: torch.Tensor, f0_true: torch.Tensor, mask: torch.Tensor, thresh: float = 1e-6) -> torch.Tensor:
+        """Voiced/Unvoiced error rate under mask.
+        pred/true: [B, T] ; mask: [B, T]
+        """
+        v_pred = (f0_pred > thresh)
+        v_true = (f0_true > thresh)
+        mismatches = (v_pred != v_true) & mask.bool()
+        total = mask.sum().clamp_min(1)
+        return mismatches.sum().to(f0_pred.dtype) / total
+
     def training_step(self, batch, batch_idx):
         """Training step."""
         # Forward pass
@@ -459,6 +491,8 @@ class TTSTrainer(pl.LightningModule):
         duration_loss = torch.tensor(0.0, device=self.device)
         f0_loss = torch.tensor(0.0, device=self.device)
         energy_loss = torch.tensor(0.0, device=self.device)
+        f0_corr = torch.tensor(0.0, device=self.device)
+        vuv_err = torch.tensor(0.0, device=self.device)
         
         # Build frame mask from ground-truth duration_frames for masking
         frame_mask = None
@@ -493,6 +527,9 @@ class TTSTrainer(pl.LightningModule):
             target_f0 = target_f0[:, :min_len]
             f0_mask = frame_mask[:, :min_len]
             f0_loss = self._masked_mse(f0_pred, target_f0, f0_mask)
+            # F0 correlation and V/UV error
+            f0_corr = self._masked_pearsonr(f0_pred, target_f0, f0_mask)
+            vuv_err = self._masked_vuv_error(f0_pred, target_f0, f0_mask)
         
         # Energy loss (masked)
         if 'energy' in batch and 'prosody_predictions' in outputs and frame_mask is not None:
@@ -524,6 +561,8 @@ class TTSTrainer(pl.LightningModule):
         self.log('train_duration_loss', duration_loss)
         self.log('train_f0_loss', f0_loss)
         self.log('train_energy_loss', energy_loss)
+        self.log('train_f0_corr', f0_corr)
+        self.log('train_vuv_error', vuv_err)
         
         return total_loss
     
@@ -537,6 +576,8 @@ class TTSTrainer(pl.LightningModule):
         duration_loss = torch.tensor(0.0, device=self.device)
         f0_loss = torch.tensor(0.0, device=self.device)
         energy_loss = torch.tensor(0.0, device=self.device)
+        f0_corr = torch.tensor(0.0, device=self.device)
+        vuv_err = torch.tensor(0.0, device=self.device)
         
         # Frame mask from ground-truth durations if available (validation should have it)
         frame_mask = None
@@ -569,6 +610,9 @@ class TTSTrainer(pl.LightningModule):
             target_f0 = target_f0[:, :min_len]
             f0_mask = frame_mask[:, :min_len]
             f0_loss = self._masked_mse(f0_pred, target_f0, f0_mask)
+            # F0 correlation and V/UV error
+            f0_corr = self._masked_pearsonr(f0_pred, target_f0, f0_mask)
+            vuv_err = self._masked_vuv_error(f0_pred, target_f0, f0_mask)
         
         # Energy loss (masked)
         if 'energy' in batch and 'prosody_predictions' in outputs and frame_mask is not None:
@@ -632,6 +676,8 @@ class TTSTrainer(pl.LightningModule):
         self.log('val_duration_rmse', duration_rmse)
         self.log('val_f0_rmse', f0_rmse)
         self.log('val_energy_rmse', energy_rmse)
+        self.log('val_f0_corr', f0_corr)
+        self.log('val_vuv_error', vuv_err)
         
         return total_loss
     
