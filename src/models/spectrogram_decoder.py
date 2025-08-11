@@ -138,13 +138,35 @@ class SpectrogramDecoder(nn.Module):
         x = x.squeeze(-1).transpose(1, 2)  # [batch_size, seq_len, hidden_dim // 4]
         
         # Generate spectrogram
-        spectrogram = self.final_kan(x)
-        
-        # CRITICAL FIX: Truncate to target length if provided (handles upsampling expansion)
-        if target_length is not None and spectrogram.shape[1] != target_length:
-            if os.environ.get("DEBUG", False):
-                print(f"⚠️ WARNING: Spectrogram length {spectrogram.shape[1]} != target {target_length}, truncating")
-            # Truncate to target length
-            spectrogram = spectrogram[:, :target_length, :]
-        
-        return spectrogram
+        mel = self.final_kan(x)
+        return mel
+
+
+class SimpleSpectrogramDecoder(nn.Module):
+    """Simple position-wise MLP decoder (no KAN), for interpretability control runs.
+    Operates frame-wise over expanded features to predict mel bins.
+    """
+    def __init__(self,
+                 input_dim: int,
+                 hidden_dim: int,
+                 output_dim: int,
+                 dropout: float = 0.1):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.LayerNorm(hidden_dim),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.LayerNorm(hidden_dim),
+            nn.Linear(hidden_dim, output_dim)
+        )
+    
+    def forward(self, features: torch.Tensor) -> torch.Tensor:
+        # features: [B, T, D]
+        B, T, D = features.shape
+        x = features.reshape(B*T, D)
+        y = self.net(x)
+        return y.view(B, T, -1)

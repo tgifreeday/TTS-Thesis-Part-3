@@ -29,7 +29,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dataset import TTSDataset
 from models.prosody_predictor_modular import MLPPredictor, TransformerPredictor, KANPredictor, create_prosody_predictor
 # DurationPredictor is implemented inline in the TTSModel class
-from models.spectrogram_decoder import SpectrogramDecoder
+from models.spectrogram_decoder import SpectrogramDecoder, SimpleSpectrogramDecoder
 from utils.config import Config
 from utils.logging import setup_logging
 from models.vocoder import HiFiGANVocoder
@@ -176,25 +176,26 @@ class TTSTrainer(pl.LightningModule):
         # Length regulator expands phoneme-level features to audio-level features
         input_dim = model_config.phoneme_encoder['hidden_dim'] + 1  # 271 + 1 = 272
         
-        # Create spectrogram decoder with proper input dimension
-        layers = []
-        # First layer: input_dim -> hidden_dim
-        layers.append(nn.Linear(input_dim, model_config.spectrogram_decoder['hidden_dim']))
-        layers.append(nn.ReLU())
-        layers.append(nn.Dropout(model_config.spectrogram_decoder['dropout']))
-        
-        # Hidden layers: hidden_dim -> hidden_dim
-        for _ in range(model_config.spectrogram_decoder['n_layers'] - 1):
-            layers.append(nn.Linear(model_config.spectrogram_decoder['hidden_dim'], 
-                                  model_config.spectrogram_decoder['hidden_dim']))
-            layers.append(nn.ReLU())
-            layers.append(nn.Dropout(model_config.spectrogram_decoder['dropout']))
-        
-        # Output layer: hidden_dim -> output_dim
-        layers.append(nn.Linear(model_config.spectrogram_decoder['hidden_dim'], 
-                              model_config.spectrogram_decoder['output_dim']))
-        
-        self.spectrogram_decoder = nn.Sequential(*layers)
+        # Create spectrogram decoder (KAN or simple) with proper input dimension
+        if model_config.spectrogram_decoder.get('simple', False):
+            self.spectrogram_decoder = SimpleSpectrogramDecoder(
+                input_dim=input_dim,
+                hidden_dim=model_config.spectrogram_decoder['hidden_dim'],
+                output_dim=model_config.spectrogram_decoder['output_dim'],
+                dropout=model_config.spectrogram_decoder['dropout']
+            )
+        else:
+            # Default: KAN-based decoder
+            self.spectrogram_decoder = SpectrogramDecoder(
+                input_dim=input_dim,
+                hidden_dim=model_config.spectrogram_decoder['hidden_dim'],
+                output_dim=model_config.spectrogram_decoder['output_dim'],
+                kernel_sizes=[3,5,7],
+                num_layers=model_config.spectrogram_decoder.get('n_layers', 4),
+                num_basis=8,
+                degree=3,
+                dropout=model_config.spectrogram_decoder['dropout']
+            )
         
         # Prosody feature predictors are now handled by the prosody_predictor
         # No need for separate predictors
