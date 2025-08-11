@@ -1,0 +1,23 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+
+# Data & outputs
+data/
+experiments/
+*.npy
+*.pt
+*.tar.gz
+*.zip
+*.rtfd
+*.ipynb_checkpoints/
+
+# Logs
+logs/
+*.log
+
+# OS files
+.DS_Store
+
+# Venv
+.venv/
