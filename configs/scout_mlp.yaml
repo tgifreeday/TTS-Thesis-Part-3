@@ -1,0 +1,185 @@
+# Scout Experiment Configuration
+# Purpose: Cost estimation and pipeline validation
+# Duration: 5-10 epochs for quick feedback
+
+# -- Data Configuration (identical to baseline) --
+data:
+  dataset_path: "data/processed/linguistic_features_with_audio_paths.json"
+  train_files: "data/processed/train_files.txt"
+  val_files: "data/processed/val_files.txt"
+  input_features: ["phoneme_id", "pos_tag", "syllable_stress", "word_stress", "sentence_stress", "boundary_tone", "focus_marking", "topic_marking", "givenness", "definiteness", "animacy", "number", "gender", "case", "tense"]
+  batch_size: 32
+  num_workers: 4
+  pin_memory: true
+  shuffle: true
+  val_split: 0.1
+  random_seed: 42
+
+# -- Audio Configuration (moved to top level) --
+audio:
+  sampling_rate: 22050
+  n_fft: 1024
+  hop_length: 256
+  win_length: 1024
+  n_mels: 80
+  f_min: 0
+  f_max: 8000
+  f0_min: 50
+  f0_max: 800
+  f0_bin_size: 256
+  energy_threshold: 0.1
+  duration_min: 0.1
+  duration_max: 10.0
+
+# -- Model Architecture Configuration (identical to baseline) --
+model:
+  architecture_type: "transformer"  # Standard architecture
+  
+  # MLP prosody predictor (baseline)
+  prosody_predictor:
+    name: "mlp"
+    input_dim: 272  # Combined features dimension
+    hidden_dims: [512, 256, 128]
+    output_dim: 272  # CRITICAL FIX: Now matches input_dim for consistency
+    dropout: 0.1
+    activation: "relu"
+    batch_norm: true  # Uses LayerNorm for stability
+    
+  # Phoneme encoder (identical to baseline)
+  phoneme_encoder:
+    embedding_dim: 256
+    n_layers: 4
+    hidden_dim: 272  # Must be divisible by n_heads
+    dropout: 0.1
+    max_phoneme_length: 100
+    
+  # Spectrogram decoder (identical to baseline)
+  spectrogram_decoder:
+    n_layers: 6
+    hidden_dim: 273  # Encoded features (272) + duration feature (1)
+    output_dim: 80  # n_mels
+    dropout: 0.1
+    
+  # Vocoder configuration
+  vocoder:
+    name: "hifigan"
+    checkpoint_path: "checkpoints/hifigan.pt"
+    sample_rate: 22050
+
+# -- SCOUT TRAINING CONFIGURATION (SHORT DURATION) --
+training:
+  # Optimization
+  optimizer: "AdamW"
+  learning_rate: 0.0001  # REDUCED: Lower learning rate for stability
+  weight_decay: 0.01
+  betas: [0.9, 0.999]
+  eps: 1e-8
+  
+  # Learning rate scheduling
+  scheduler: "cosine"
+  warmup_steps: 1000  # Warm-up over 1000 steps for stability
+  
+  # SCOUT: Short training duration for cost estimation
+  max_epochs: 10  # SHORT: 10 epochs instead of 1000
+  max_steps: null  # Use epochs instead
+  
+  # Early stopping (relaxed for scout)
+  early_stopping_patience: 5  # Shorter patience for scout
+  early_stopping_min_delta: 0.001
+  
+  # Gradient handling
+  gradient_clip_val: null  # Disable value clipping
+  gradient_clip_norm: 1.0  # Use norm clipping for stability
+  
+  # Mixed precision
+  use_amp: true
+  precision: "16-mixed"
+  
+  # Checkpointing (minimal for scout)
+  save_top_k: 1  # Only save best model
+  save_last: false  # Don't save last checkpoint
+  save_every_n_epochs: 5  # Save every 5 epochs
+  
+  # Validation (frequent for scout)
+  val_check_interval: 1.0  # Validate every epoch
+  num_sanity_val_steps: 2
+
+# -- Loss Configuration (identical to baseline) --
+loss:
+  # Loss weights for different components
+  mel_loss_weight: 1.0
+  duration_loss_weight: 1.0
+  f0_loss_weight: 1.0
+  energy_loss_weight: 0.5
+  
+  # Loss functions
+  mel_loss: "l1"  # L1 loss for mel spectrograms
+  duration_loss: "mse"  # MSE for duration prediction
+  f0_loss: "mse"  # MSE for F0 prediction
+  energy_loss: "mse"  # MSE for energy prediction
+  
+  # Additional loss terms
+  use_kl_loss: false
+  kl_loss_weight: 0.0
+
+# -- SCOUT EXPERIMENT CONFIGURATION (MINIMAL LOGGING) --
+experiment:
+  output_dir: null  # Will be overridden by run_experiment.sh
+  monitor: "val_loss"
+  mode: "min"
+  save_checkpoint_every_n_epochs: 5
+  
+  # SCOUT: Frequent logging for monitoring
+  log_every_n_steps: 50  # More frequent logging
+  log_every_n_epochs: 1
+  
+  # TensorBoard logging (minimal for scout)
+  log_gradients: false  # Disable to save time
+  log_learning_rate: true
+  log_histograms: false
+  log_audio_every_n_epochs: 5  # Log audio every 5 epochs
+  log_audio_samples: 3  # Fewer samples
+  save_best_model: true
+
+# -- Evaluation Configuration (minimal for scout) --
+evaluation:
+  metrics:
+    - "duration_rmse"
+    - "f0_rmse"
+    - "energy_rmse"
+    - "mel_l1_loss"
+    - "mel_l2_loss"
+    - "overall_loss"
+  generate_audio_every_n_epochs: 5  # Generate audio every 5 epochs
+  num_eval_samples: 3  # Fewer samples
+  test_sentences:
+    - "De Nederlandse taal heeft complexe prosodie."
+    - "Kolmogorov-Arnold netwerken zijn innovatief."
+
+# -- Hardware Configuration (cloud-ready) --
+hardware:
+  gpus: 1
+  accelerator: "gpu"
+  devices: 1
+  accumulate_grad_batches: 1
+  sync_batchnorm: false
+  precision: "16-mixed"
+  deterministic: false
+
+# -- Debugging Configuration (minimal for scout) --
+debug:
+  debug_mode: false
+  fast_dev_run: false
+  limit_train_batches: null
+  limit_val_batches: null
+  enable_profiler: false
+  profiler_filename: "scout_profile"
+  track_grad_norm: true
+  log_memory_usage: true  # Enable for cost monitoring
+
+# -- Reproducibility (identical to baseline) --
+reproducibility:
+  seed: null  # Will be set by run_experiment.sh
+  deterministic: false
+  cudnn_benchmark: true
+  cudnn_deterministic: false 

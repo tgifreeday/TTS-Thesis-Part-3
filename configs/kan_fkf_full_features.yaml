@@ -1,0 +1,258 @@
+# ==============================================================================
+# CONFIGURATION: KAN-FKF Full Features - Primary Hypothesis Test
+# ==============================================================================
+# Corresponds to Model C in the Golden Roadmap.
+# Tests the KAN architecture with the full set of rich linguistic features.
+# This is the primary hypothesis test: KANs outperform traditional architectures.
+# ==============================================================================
+
+# -- Project & Experiment Details --
+project_name: "KAN-TTS-Thesis"
+run_name: "kan_fkf_full_features"
+experiment_id: "kan_fkf_full_features"
+description: "KAN-FKF architecture with full Booij-validated linguistic features"
+
+# -- Data Configuration (identical to Transformer) --
+data:
+  dataset_path: "data/processed/linguistic_features.json"
+  train_files: "data/processed/train_files.txt"
+  val_files: "data/processed/val_files.txt"
+  
+  # Features to be loaded from the JSON file for the model input
+  # This is the FULL set of Booij-validated features (identical to Transformer)
+  input_features:
+    - "phoneme_id"
+    - "stress_level"
+    - "primary_stress_pos"
+    - "secondary_stress_pos"
+    - "pos_tag"
+    - "is_content_word"
+    - "word_position_in_sentence"
+    - "is_sentence_initial"
+    - "is_sentence_final"
+    - "syllable_count"
+    - "word_length"
+    - "is_compound"
+    - "is_loanword"
+    - "vowel_count"
+    - "consonant_count"
+  
+  # Data loading parameters (identical to Transformer)
+  batch_size: 32
+  num_workers: 4
+  pin_memory: true
+  shuffle: true
+  
+  # Validation split
+  val_split: 0.1
+  random_seed: 42
+
+# -- Audio Processing Parameters (identical to Transformer) --
+audio:
+  sampling_rate: 22050
+  n_fft: 1024
+  hop_length: 256
+  win_length: 1024
+  n_mels: 80
+  f_min: 0.0
+  f_max: 8000.0
+  
+  # F0 extraction parameters
+  f0_min: 50.0
+  f0_max: 500.0
+  f0_bin_size: 256
+  
+  # Energy calculation
+  energy_threshold: 1e-8
+  
+  # Duration parameters
+  duration_min: 0.1
+  duration_max: 10.0
+
+# -- Model Architecture Configuration --
+model:
+  # The main variable for this experiment - KAN-FKF architecture
+  prosody_predictor:
+    name: "kan_fkf"  # This will tell train.py to instantiate the KAN-FKF model
+    input_dim: 272  # Dimension of encoded features (271 + 1 minimal projection)
+    hidden_dim: 272  # Hidden dimension for feed-forward layers
+    output_dim: 272  # Output dimension
+    
+    # KAN-specific configuration
+    kan_config:
+      num_basis: 8  # Number of basis functions
+      degree: 3  # Polynomial degree
+      use_linear: true  # Use linear projection as fallback
+      dropout: 0.1  # Dropout rate for KAN layers
+    
+    # FKF architecture: Feed-Forward, KAN, Feed-Forward
+    fkf_config:
+      ff1_dim: 272  # First feed-forward layer dimension
+      ff2_dim: 272  # Second feed-forward layer dimension
+      ff_dropout: 0.1  # Dropout for feed-forward layers
+      ff_activation: "relu"  # Activation for feed-forward layers
+  
+  # Phoneme encoder (identical to Transformer)
+  phoneme_encoder:
+    embedding_dim: 256
+    n_layers: 4
+    # CRITICAL FIX: The hidden dimension must be divisible by num_heads (8)
+    # 272 is the closest multiple of 8 that can accommodate 271 features
+    hidden_dim: 272
+    dropout: 0.1
+    max_phoneme_length: 100
+  
+  # Spectrogram decoder (identical across all experiments)
+  spectrogram_decoder:
+    n_layers: 6
+    hidden_dim: 259  # Encoded features (256) + duration (1) + F0 (1) + energy (1)
+    output_dim: 80  # n_mels
+    dropout: 0.1
+    activation: "relu"
+  
+  # Vocoder configuration (identical to Transformer)
+  vocoder:
+    name: "hifigan"
+    checkpoint_path: "checkpoints/hifigan.pt"
+    sample_rate: 22050
+
+# -- Training Hyperparameters (identical to Transformer) --
+training:
+  # Optimization
+  optimizer: "AdamW"
+  learning_rate: 0.001  # Slightly higher for KANs
+  weight_decay: 0.01
+  betas: [0.9, 0.999]
+  eps: 1e-8
+  
+  # Learning rate scheduling
+  scheduler: "cosine"
+  warmup_steps: 2000
+  
+  # Training duration
+  max_epochs: 1000
+  max_steps: null  # Use epochs instead
+  
+  # Early stopping
+  early_stopping_patience: 20
+  early_stopping_min_delta: 0.001
+  
+  # Gradient handling
+  gradient_clip_val: 1.0
+  gradient_clip_norm: null
+  
+  # Mixed precision
+  use_amp: true
+  precision: "16-mixed"
+  
+  # Checkpointing
+  save_top_k: 3
+  save_last: true
+  save_every_n_epochs: 5
+  
+  # Validation
+  val_check_interval: 1.0  # Validate every epoch
+  num_sanity_val_steps: 2
+
+# -- Loss Configuration (identical to Transformer) --
+loss:
+  # Loss weights for different components
+  mel_loss_weight: 1.0
+  duration_loss_weight: 1.0
+  f0_loss_weight: 1.0
+  energy_loss_weight: 0.5
+  
+  # Loss functions
+  mel_loss: "l1"  # L1 loss for mel spectrograms
+  duration_loss: "mse"  # MSE for duration prediction
+  f0_loss: "mse"  # MSE for F0 prediction
+  energy_loss: "mse"  # MSE for energy prediction
+  
+  # Additional loss terms
+  use_kl_loss: false
+  kl_loss_weight: 0.0
+
+# -- Logging & Checkpointing (identical to Transformer) --
+experiment:
+  output_dir: null  # This will be overridden by run_experiment.sh
+  log_every_n_steps: 100
+  log_every_n_epochs: 1
+  
+  # TensorBoard logging
+  log_gradients: true
+  log_learning_rate: true
+  log_histograms: false
+  
+  # Audio logging
+  log_audio_every_n_epochs: 5
+  log_audio_samples: 3
+  
+  # Model checkpointing
+  save_checkpoint_every_n_epochs: 5
+  save_best_model: true
+  monitor: "val_loss"
+  mode: "min"
+
+# -- Evaluation Configuration (identical to Transformer) --
+evaluation:
+  # Metrics to track
+  metrics:
+    - "duration_rmse"
+    - "f0_rmse"
+    - "energy_rmse"
+    - "mel_l1_loss"
+    - "mel_l2_loss"
+    - "overall_loss"
+  
+  # Audio generation for evaluation
+  generate_audio_every_n_epochs: 10
+  num_eval_samples: 5
+  
+  # Test sentences for evaluation
+  test_sentences:
+    - "De Nederlandse taal heeft complexe prosodie."
+    - "Kolmogorov-Arnold netwerken zijn innovatief."
+    - "Booij's fonologische regels zijn essentieel."
+    - "Synthetische spraak moet natuurlijk klinken."
+    - "Linguïstische features verbeteren de kwaliteit."
+
+# -- Hardware Configuration (identical to Transformer) --
+hardware:
+  # GPU settings
+  gpus: 1
+  accelerator: "gpu"
+  devices: 1
+  
+  # Memory optimization
+  accumulate_grad_batches: 1
+  sync_batchnorm: false
+  
+  # Precision
+  precision: "16-mixed"
+  deterministic: false
+
+# -- Debugging Configuration (identical to Transformer) --
+debug:
+  # Debug mode settings
+  debug_mode: false
+  fast_dev_run: false
+  limit_train_batches: null
+  limit_val_batches: null
+  
+  # Profiling
+  enable_profiler: false
+  profiler_filename: "training_profile"
+  
+  # Memory profiling
+  track_grad_norm: true
+  log_memory_usage: false
+
+# -- Reproducibility (identical to Transformer) --
+reproducibility:
+  # Random seeds
+  seed: null  # Will be set by run_experiment.sh
+  deterministic: false
+  
+  # CUDA settings
+  cudnn_benchmark: true
+  cudnn_deterministic: false 

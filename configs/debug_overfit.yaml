@@ -1,0 +1,185 @@
+# Debug Overfit Configuration
+# Purpose: Force model to memorize a single batch to validate pipeline
+# Expected: Training loss drops to near-zero, proving pipeline works
+
+# -- Data Configuration (minimal for overfitting) --
+data:
+  dataset_path: "data/processed/linguistic_features_with_audio_paths.json"
+  train_files: "data/processed/train_files.txt"
+  val_files: "data/processed/val_files.txt"
+  input_features: ["phoneme_id", "pos_tag", "syllable_stress", "word_stress", "sentence_stress", "boundary_tone", "focus_marking", "topic_marking", "givenness", "definiteness", "animacy", "number", "gender", "case", "tense"]
+  batch_size: 4  # Small batch size for CPU
+  num_workers: 0  # No multiprocessing for debugging
+  pin_memory: false  # Disable for CPU
+  shuffle: false  # Deterministic for debugging
+  val_split: 0.1
+  random_seed: 42
+
+# -- Audio Configuration --
+audio:
+  sampling_rate: 22050
+  n_fft: 1024
+  hop_length: 256
+  win_length: 1024
+  n_mels: 80
+  f_min: 0
+  f_max: 8000
+  f0_min: 50
+  f0_max: 800
+  f0_bin_size: 256
+  energy_threshold: 0.1
+  duration_min: 0.1
+  duration_max: 10.0
+
+# -- Model Architecture (standard for validation) --
+model:
+  architecture_type: "transformer"
+  
+  # MLP prosody predictor (standard)
+  prosody_predictor:
+    name: "mlp"
+    input_dim: 272
+    hidden_dims: [512, 256, 128]
+    output_dim: 272
+    dropout: 0.0  # No dropout for overfitting
+    activation: "relu"
+    batch_norm: true
+    
+  # Phoneme encoder (standard)
+  phoneme_encoder:
+    embedding_dim: 256
+    n_layers: 4
+    hidden_dim: 272
+    dropout: 0.0  # No dropout for overfitting
+    max_phoneme_length: 100
+    
+  # Spectrogram decoder (standard)
+  spectrogram_decoder:
+    n_layers: 6
+    hidden_dim: 273
+    output_dim: 80
+    dropout: 0.0  # No dropout for overfitting
+    
+  # Vocoder configuration
+  vocoder:
+    name: "hifigan"
+    checkpoint_path: "checkpoints/hifigan.pt"
+    sample_rate: 22050
+
+# -- Training Configuration (overfitting setup) --
+training:
+  # Optimization
+  optimizer: "AdamW"
+  learning_rate: 0.001
+  weight_decay: 0.0  # No regularization for overfitting
+  betas: [0.9, 0.999]
+  eps: 1e-8
+  
+  # Learning rate scheduling
+  scheduler: "cosine"
+  warmup_steps: 200
+  
+  # OVERFITTING: Many epochs on tiny data
+  max_epochs: 200  # Many epochs to force memorization
+  max_steps: null
+  
+  # Early stopping (disabled for overfitting)
+  early_stopping_patience: 1000  # Very long patience
+  early_stopping_min_delta: 0.0001
+  
+  # Gradient handling
+  gradient_clip_val: 1.0
+  gradient_clip_norm: null
+  
+  # Mixed precision (disable for CPU)
+  use_amp: false
+  precision: "32"
+  
+  # Checkpointing (minimal)
+  save_top_k: 1
+  save_last: false
+  save_every_n_epochs: 50
+  
+  # Validation (frequent)
+  val_check_interval: 1.0
+  num_sanity_val_steps: 1
+
+# -- Loss Configuration --
+loss:
+  # Loss weights
+  mel_loss_weight: 1.0
+  duration_loss_weight: 1.0
+  f0_loss_weight: 1.0
+  energy_loss_weight: 0.5
+  
+  # Loss functions
+  mel_loss: "l1"
+  duration_loss: "mse"
+  f0_loss: "mse"
+  energy_loss: "mse"
+  
+  # Additional loss terms
+  use_kl_loss: false
+  kl_loss_weight: 0.0
+
+# -- Experiment Configuration (debug) --
+experiment:
+  output_dir: null
+  monitor: "train_loss"  # Monitor training loss for overfitting
+  mode: "min"
+  save_checkpoint_every_n_epochs: 50
+  
+  # Debug logging
+  log_every_n_steps: 1  # Log every step
+  log_every_n_epochs: 1
+  
+  # TensorBoard logging (minimal)
+  log_gradients: false
+  log_learning_rate: true
+  log_histograms: false
+  log_audio_every_n_epochs: 50
+  log_audio_samples: 2
+  save_best_model: true
+
+# -- Evaluation Configuration (debug) --
+evaluation:
+  metrics:
+    - "duration_rmse"
+    - "f0_rmse"
+    - "energy_rmse"
+    - "mel_l1_loss"
+    - "mel_l2_loss"
+    - "overall_loss"
+  generate_audio_every_n_epochs: 50
+  num_eval_samples: 2
+  test_sentences:
+    - "Debug test utterance one."
+    - "Debug test utterance two."
+
+# -- Hardware Configuration (CPU only) --
+hardware:
+  gpus: 0  # CPU only
+  accelerator: "cpu"
+  devices: 1
+  accumulate_grad_batches: 1
+  sync_batchnorm: false
+  precision: "32"
+  deterministic: true
+
+# -- Debugging Configuration (overfitting setup) --
+debug:
+  debug_mode: true
+  fast_dev_run: false
+  limit_train_batches: 1  # CRITICAL: Only ONE batch for training
+  limit_val_batches: 1    # CRITICAL: Only ONE batch for validation
+  enable_profiler: false
+  profiler_filename: "debug_overfit_profile"
+  track_grad_norm: true
+  log_memory_usage: true
+
+# -- Reproducibility --
+reproducibility:
+  seed: 42
+  deterministic: true
+  cudnn_benchmark: false
+  cudnn_deterministic: true 

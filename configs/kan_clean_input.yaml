@@ -1,0 +1,170 @@
+# ==============================================================================
+# CONFIGURATION: KAN Clean Input Experiment
+# ==============================================================================
+# Critical interpretability experiment to validate KAN claims.
+# Bypasses Transformer encoder for linguistic features to enable
+# direct tracing of KAN functions to original Booij features.
+# ==============================================================================
+
+# -- Project & Experiment Details --
+project_name: "KAN-TTS-Thesis"
+run_name: "kan_clean_input"
+experiment_id: "kan_clean_input"
+description: "KAN-FKF with clean linguistic feature input (interpretability study)"
+
+# -- Data Configuration (identical to full features) --
+data:
+  dataset_path: "data/processed/linguistic_features_with_audio_paths.json"
+  train_files: "data/processed/train_files.txt"
+  val_files: "data/processed/val_files.txt"
+  
+  # Use all features for clean input experiment
+  input_features:
+    - "phoneme_id"
+    - "stress_level"
+    - "primary_stress_pos"
+    - "secondary_stress_pos"
+    - "pos_tag"
+    - "is_content_word"
+    - "word_position_in_sentence"
+    - "is_sentence_initial"
+    - "is_sentence_final"
+    - "syllable_count"
+    - "word_length"
+    - "is_compound"
+    - "is_loanword"
+    - "vowel_count"
+    - "consonant_count"
+  
+  # Data loading parameters
+  batch_size: 32
+  num_workers: 4
+  pin_memory: true
+  shuffle: true
+  
+  # Validation split
+  val_split: 0.1
+  random_seed: 42
+
+# -- Audio Processing Parameters (identical to full features) --
+audio:
+  sampling_rate: 22050
+  n_fft: 1024
+  hop_length: 256
+  win_length: 1024
+  n_mels: 80
+  f_min: 0.0
+  f_max: 8000.0
+  
+  # F0 extraction parameters
+  f0_min: 50.0
+  f0_max: 500.0
+  f0_bin_size: 256
+  
+  # Energy calculation
+  energy_threshold: 1e-8
+  
+  # Duration parameters
+  duration_min: 0.1
+  duration_max: 10.0
+
+# -- Model Architecture Configuration (Clean Input Variant) --
+model:
+  # CRITICAL: Clean input architecture for interpretability
+  architecture_type: "clean_input"  # New parameter to distinguish from Transformer-based
+  
+  # KAN-FKF architecture (same as full features)
+  prosody_predictor:
+    name: "kan_fkf"  # Same KAN architecture
+    input_dim: 270  # Dimension of combined features (256 phoneme + 14 linguistic)
+    hidden_dim: 270  # Hidden dimension for feed-forward layers
+    output_dim: 270  # Output dimension
+    
+    # KAN-specific configuration (identical to full features)
+    kan_config:
+      spline_order: 3  # B-spline order
+      grid_size: 5  # Number of grid points
+      base_activation: "SiLU"  # Activation function for KAN layers
+      num_basis: 8  # Number of basis functions
+      degree: 3  # Polynomial degree
+      dropout: 0.1  # Dropout rate for KAN layers
+    
+    # FKF architecture: Feed-Forward, KAN, Feed-Forward (identical)
+    fkf_config:
+      ff1_dim: 270  # First feed-forward layer dimension
+      ff2_dim: 270  # Second feed-forward layer dimension
+      ff_dropout: 0.1  # Dropout for feed-forward layers
+      ff_activation: "relu"  # Activation for feed-forward layers
+  
+  # CRITICAL: Simple phoneme encoder (no Transformer)
+  phoneme_encoder:
+    type: "simple_embedding"  # New parameter to distinguish from Transformer
+    embedding_dim: 256
+    # No layers parameter - just simple embedding
+  
+  # CRITICAL: Simple linguistic feature encoder
+  linguistic_encoder:
+    type: "simple_linear"  # New component for clean input
+    input_dim: 14  # 14 Booij features
+    output_dim: 256  # Match phoneme embedding dimension
+    dropout: 0.1
+  
+  # Spectrogram decoder (identical to full features)
+  spectrogram_decoder:
+    n_layers: 6
+    hidden_dim: 280  # Combined features (256 phoneme + 14 linguistic + 10 prosody)
+    output_dim: 80  # n_mels
+    dropout: 0.1
+
+# -- Training Configuration (identical to full features) --
+training:
+  # Optimizer settings
+  optimizer: "adam"
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  eps: 1e-8
+  
+  # Scheduler settings
+  scheduler: "cosine"
+  warmup_steps: 1000
+  max_steps: 50000
+  
+  # Training parameters
+  max_epochs: 100
+  gradient_clip_val: 1.0
+  accumulate_grad_batches: 1
+  
+  # Checkpointing
+  save_top_k: 3
+  save_last: true
+  
+  # Early stopping
+  early_stopping_patience: 10
+  early_stopping_min_delta: 0.001
+
+# -- Loss Configuration (identical to full features) --
+loss:
+  mel_loss: "l1"
+  duration_loss: "mse"
+  f0_loss: "mse"
+  energy_loss: "mse"
+  
+  # Loss weights
+  mel_loss_weight: 1.0
+  duration_loss_weight: 1.0
+  f0_loss_weight: 1.0
+  energy_loss_weight: 1.0
+
+# -- Experiment Configuration (identical to full features) --
+experiment:
+  monitor: "val_loss"
+  mode: "min"
+  save_checkpoint_every_n_epochs: 5
+  
+  # Logging
+  log_every_n_steps: 100
+  val_check_interval: 1.0
+  
+  # Reproducibility
+  deterministic: true
+  benchmark: false 
