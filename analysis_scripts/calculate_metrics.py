@@ -80,15 +80,27 @@ def parse_training_log(log_path: str) -> Dict:
     
     # Calculate final metrics
     metrics['final_metrics'] = {
-        'duration_rmse': np.mean(metrics['duration_rmse'][-5:]),
-        'f0_rmse': np.mean(metrics['f0_rmse'][-5:]),
-        'energy_rmse': np.mean(metrics['energy_rmse'][-5:]),
+        'duration_rmse': np.mean(metrics['duration_rmse'][-5:]) if metrics['duration_rmse'] else None,
+        'f0_rmse': np.mean(metrics['f0_rmse'][-5:]) if metrics['f0_rmse'] else None,
+        'energy_rmse': np.mean(metrics['energy_rmse'][-5:]) if metrics['energy_rmse'] else None,
         'best_val_loss': metrics['best_val_loss'],
         'convergence_epoch': metrics['convergence_epoch'],
         'training_time_hours': metrics['training_time_hours']
     }
     
     return metrics
+
+def compute_mcd(mel_pred: np.ndarray, mel_target: np.ndarray, eps: float = 1e-8) -> float:
+    """Compute Mel-Cepstral Distortion (MCD) between two mel-spectrograms.
+    This uses a simple L2 over mel bins proxy; for full MCD you would convert to MFCC/cepstral first.
+    """
+    T = min(mel_pred.shape[0], mel_target.shape[0])
+    mel_pred = mel_pred[:T]
+    mel_target = mel_target[:T]
+    diff = mel_pred - mel_target
+    # Scale factor (10 / ln(10)) * sqrt(2) is typical for cepstra; here we log as proxy
+    mcd = float(np.mean(np.linalg.norm(diff, axis=1)))
+    return mcd
 
 def main():
     parser = argparse.ArgumentParser(description='Calculate metrics for experiment run')

@@ -6,7 +6,7 @@ Supports MLP, Transformer, and KAN-FKF architectures for baseline comparison.
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Dict, Optional, Tuple, List
+from typing import Dict, Optional, Tuple, List, Any
 from components.kan_blocks import BsplineKAN, MultiScaleKAN
 
 
@@ -233,56 +233,26 @@ class KANPredictor(BaseProsodyPredictor):
                  input_dim: int,
                  hidden_dim: int,
                  output_dim: int,
-                 kan_config: Dict = None,
-                 fkf_config: Dict = None,
-                 num_basis: int = 8,
-                 degree: int = 3,
-                 dropout: float = 0.1):
+                 kan_config: Dict[str, Any],
+                 fkf_config: Dict[str, Any]):
         super().__init__(input_dim, output_dim)
-        
-        self.hidden_dim = hidden_dim
-        self.num_basis = num_basis
-        self.degree = degree
-        self.dropout = dropout
-        
-        # Use provided configs or defaults
-        kan_config = kan_config or {}
-        fkf_config = fkf_config or {}
-        
-        # Initial feed-forward layer
-        self.input_ff = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(dropout)
+        self.kan_config = kan_config
+        self.fkf_config = fkf_config
+        self.lambda_smooth = kan_config.get('lambda_smooth', 0.0)
+        # Define layers (example composition)
+        self.ff1 = nn.Linear(input_dim, fkf_config.get('ff1_dim', hidden_dim))
+        self.kan = BsplineKAN(
+            in_features=fkf_config.get('ff1_dim', hidden_dim),
+            out_features=hidden_dim,
+            num_basis=kan_config.get('num_basis', 8),
+            degree=kan_config.get('degree', 3),
+            use_linear=kan_config.get('use_linear', True),
+            dropout=kan_config.get('dropout', 0.1)
         )
-        
-        # KAN layer for non-linear transformation
-        # Use kan_config parameters, but override with direct parameters if provided
-        kan_params = kan_config.copy() if kan_config else {}
-        kan_params.update({
-            'in_features': hidden_dim,
-            'out_features': hidden_dim,
-            'num_basis': num_basis,
-            'degree': degree,
-            'dropout': dropout
-        })
-        self.kan_layer = BsplineKAN(**kan_params)
-        
-        # Final feed-forward layer
-        self.output_ff = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(dropout)
-        )
-        
-        # Feature-specific predictors with KAN architecture
-        # CRITICAL FIX: Predict single values per phoneme to match ground-truth contours
-        self.f0_predictor = KANFeaturePredictor(hidden_dim, 1, num_basis, degree, dropout)  # F0 (single value per phoneme)
-        self.energy_predictor = KANFeaturePredictor(hidden_dim, 1, num_basis, degree, dropout)  # Energy (single value per phoneme)
-        self.duration_predictor = KANFeaturePredictor(hidden_dim, 1, num_basis, degree, dropout)
-        self.voice_quality_predictor = KANFeaturePredictor(hidden_dim, 3, num_basis, degree, dropout)
+        # Set smoothness regularization weight
+        self.kan.lambda_smooth = self.lambda_smooth
+        self.ff2 = nn.Linear(hidden_dim, fkf_config.get('ff2_dim', hidden_dim))
+        self.out_linear = nn.Linear(fkf_config.get('ff2_dim', hidden_dim), output_dim)
     
     def forward(self, 
                 hidden_states: torch.Tensor,
@@ -291,7 +261,7 @@ class KANPredictor(BaseProsodyPredictor):
         Forward pass through the KAN-FKF prosody predictor.
         """
         # Apply initial feed-forward layer
-        x = self.input_ff(hidden_states)
+        x = self.ff1(hidden_states)
         
         # CRITICAL FIX: Remove utterance-level prediction
         # Keep sequence dimension for per-phoneme predictions
@@ -304,19 +274,19 @@ class KANPredictor(BaseProsodyPredictor):
         x_reshaped = x.view(-1, hidden_dim)
         
         # Apply KAN transformation
-        kan_out = self.kan_layer(x_reshaped)  # [batch_size * seq_len, hidden_dim]
+        kan_out = self.kan(x_reshaped)  # [batch_size * seq_len, hidden_dim]
         
         # Apply final feed-forward layer
-        x_processed = self.output_ff(kan_out)  # [batch_size * seq_len, hidden_dim]
+        x_processed = self.ff2(kan_out)  # [batch_size * seq_len, hidden_dim]
         
         # Reshape back to sequence: [batch_size, seq_len, hidden_dim]
         x = x_processed.view(batch_size, seq_len, -1)
         
         # Predict individual features (per-phoneme)
-        f0 = self.f0_predictor(x)  # [batch_size, seq_len, 1]
-        energy = self.energy_predictor(x)  # [batch_size, seq_len, 1]
-        duration = self.duration_predictor(x)  # [batch_size, seq_len, 1]
-        voice_quality = self.voice_quality_predictor(x)  # [batch_size, seq_len, 3]
+        f0 = self.out_linear(x)  # [batch_size, seq_len, 1]
+        energy = self.out_linear(x)  # [batch_size, seq_len, 1]
+        duration = self.out_linear(x)  # [batch_size, seq_len, 1]
+        voice_quality = self.out_linear(x)  # [batch_size, seq_len, 3]
         
         # Combine all features
         prosody_features = torch.cat([f0, energy, duration, voice_quality], dim=-1)

@@ -56,6 +56,9 @@ class BsplineKAN(nn.Module):
         
         # Initialize control points and linear weights
         self._initialize_control_points()
+        
+        # Smoothness regularization weight (set by caller via attribute if desired)
+        self.lambda_smooth = 0.0
     
     def _initialize_control_points(self):
         """Initialize control points and linear weights using Xavier initialization for better training stability."""
@@ -63,6 +66,13 @@ class BsplineKAN(nn.Module):
         if self.use_linear:
             nn.init.xavier_uniform_(self.linear.weight)
             nn.init.zeros_(self.linear.bias)
+    
+    def smoothness_penalty(self) -> torch.Tensor:
+        """Compute L2 penalty on adjacent control-point differences to encourage smooth splines."""
+        if self.lambda_smooth <= 0:
+            return torch.tensor(0.0, device=self.control_points.device, dtype=self.control_points.dtype)
+        diffs = self.control_points[..., 1:] - self.control_points[..., :-1]
+        return self.lambda_smooth * (diffs.pow(2).mean())
     
     def _compute_basis(self, x: torch.Tensor) -> torch.Tensor:
         """

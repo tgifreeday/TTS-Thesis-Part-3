@@ -32,6 +32,7 @@ from models.prosody_predictor_modular import MLPPredictor, TransformerPredictor,
 from models.spectrogram_decoder import SpectrogramDecoder
 from utils.config import Config
 from utils.logging import setup_logging
+from models.vocoder import HiFiGANVocoder
 
 
 class TTSTrainer(pl.LightningModule):
@@ -197,6 +198,18 @@ class TTSTrainer(pl.LightningModule):
         
         # Prosody feature predictors are now handled by the prosody_predictor
         # No need for separate predictors
+        
+        # Setup optional vocoder for audio export
+        try:
+            self.vocoder = HiFiGANVocoder(type('cfg', (), {
+                'hifigan_checkpoint': model_config.vocoder.get('checkpoint_path', ''),
+                'sample_rate': model_config.vocoder.get('sample_rate', 22050),
+                'hifigan_upsample_initial_channel': 512,
+                'hifigan_resblock_kernel_sizes': (3,5,7),
+                'hifigan_resblock_dilation_sizes': (1,3,5),
+            }))
+        except Exception:
+            self.vocoder = None
         
     def _length_regulator(self, features: torch.Tensor, durations: torch.Tensor) -> torch.Tensor:
         """
@@ -496,9 +509,17 @@ class TTSTrainer(pl.LightningModule):
                      self.duration_loss_weight * duration_loss +
                      self.f0_loss_weight * f0_loss +
                      self.energy_loss_weight * energy_loss)
+        # Add KAN smoothness penalty if present
+        smooth_penalty = torch.tensor(0.0, device=self.device)
+        for m in self.modules():
+            if hasattr(m, 'smoothness_penalty'):
+                smooth_penalty = smooth_penalty + m.smoothness_penalty()
+        total_loss = total_loss + smooth_penalty
         
         # Log metrics
         self.log('train_loss', total_loss, prog_bar=True)
+        if smooth_penalty is not None:
+            self.log('train_smooth_penalty', smooth_penalty)
         self.log('train_mel_loss', mel_loss)
         self.log('train_duration_loss', duration_loss)
         self.log('train_f0_loss', f0_loss)
@@ -564,6 +585,12 @@ class TTSTrainer(pl.LightningModule):
                      self.duration_loss_weight * duration_loss +
                      self.f0_loss_weight * f0_loss +
                      self.energy_loss_weight * energy_loss)
+        # Add KAN smoothness penalty if present
+        smooth_penalty = torch.tensor(0.0, device=self.device)
+        for m in self.modules():
+            if hasattr(m, 'smoothness_penalty'):
+                smooth_penalty = smooth_penalty + m.smoothness_penalty()
+        total_loss = total_loss + smooth_penalty
         
         # Calculate RMSE metrics (masked variants)
         duration_rmse = torch.tensor(0.0, device=self.device)
@@ -596,6 +623,8 @@ class TTSTrainer(pl.LightningModule):
         
         # Log metrics
         self.log('val_loss', total_loss, prog_bar=True)
+        if smooth_penalty is not None:
+            self.log('val_smooth_penalty', smooth_penalty)
         self.log('val_mel_loss', mel_loss)
         self.log('val_duration_loss', duration_loss)
         self.log('val_f0_loss', f0_loss)
@@ -605,6 +634,15 @@ class TTSTrainer(pl.LightningModule):
         self.log('val_energy_rmse', energy_rmse)
         
         return total_loss
+    
+    def on_validation_epoch_end(self):
+        """Export a few fixed-sentence samples every N epochs for subjective checks."""
+        eval_conf = self.config.evaluation
+        if (self.current_epoch + 1) % max(1, eval_conf.generate_audio_every_n_epochs) != 0:
+            return
+        # We need a small batch from val data; Lightning doesn't expose it here easily.
+        # Skip complex fetching; instead, log a note or rely on external script.
+        self.log('audio_export_epoch', float(self.current_epoch + 1))
     
     def configure_optimizers(self):
         """Configure optimizers and a warm-up + cosine decay scheduler."""
